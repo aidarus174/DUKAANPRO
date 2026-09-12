@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function shopPath(shopId) { return /databases/$(database)/documents/shops/$(shopId); }
+    function member(shopId) {
+      return signedIn() && exists(/databases/$(database)/documents/shops/$(shopId)/users/$(request.auth.uid));
+    }
+    function owner(shopId) {
+      return member(shopId) &&
+        get(/databases/$(database)/documents/shops/$(shopId)/users/$(request.auth.uid)).data.role == "OWNER";
+    }
+    function active(shopId) {
+      return member(shopId) &&
+        get(/databases/$(database)/documents/shops/$(shopId)/users/$(request.auth.uid)).data.active == true;
+    }
+    function permission(shopId, p) {
+      return owner(shopId) ||
+        (active(shopId) &&
+         get(/databases/$(database)/documents/shops/$(shopId)/users/$(request.auth.uid)).data.permissions[p] == true);
+    }
+
+    match /shops/{shopId} {
+      allow read: if owner(shopId) || active(shopId);
+      allow create: if signedIn() && request.auth.uid == shopId;
+      allow update: if owner(shopId);
+      allow delete: if false;
+
+      match /users/{uid} {
+        allow read: if owner(shopId) || (active(shopId) && request.auth.uid == uid);
+        allow create, update: if owner(shopId) || (request.auth.uid == uid && uid == shopId);
+        allow delete: if owner(shopId);
+      }
+
+      match /products/{id} {
+        allow read: if active(shopId) && permission(shopId,"viewProducts");
+        allow create: if active(shopId) && permission(shopId,"addProducts");
+        allow update: if active(shopId) && (permission(shopId,"editProducts") || permission(shopId,"changePrices") || permission(shopId,"changeStock"));
+        allow delete: if active(shopId) && permission(shopId,"deleteProducts");
+      }
+
+      match /auditLogs/{id} {
+        allow read: if owner(shopId);
+        allow create: if active(shopId);
+        allow update, delete: if false;
+      }
+
+      match /{collection}/{id} {
+        allow read: if active(shopId);
+        allow create: if active(shopId);
+        allow update: if active(shopId);
+        allow delete: if owner(shopId);
+      }
+    }
+  }
+}
